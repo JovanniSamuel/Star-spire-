@@ -9,14 +9,24 @@ import sys
 WIDTH= 600
 HEIGHT = 1000
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+MOBS_DIR = os.path.join(ASSETS_DIR, "mobs")
+BOSSES_DIR = os.path.join(ASSETS_DIR, "bosses")
+SUMMONS_DIR = os.path.join(ASSETS_DIR, "summons")
+
 
 def load_image(sprite_path, size):
     """Load and scale an image from the given sprite_path."""
+    if not sprite_path:
+        placeholder = pygame.Surface(size)
+        placeholder.fill((128, 128, 128))
+        return placeholder
     try:
         image = pygame.image.load(sprite_path)
         image = pygame.transform.scale(image, size)
         return image
-    except (FileNotFoundError, pygame.error) as e:
+    except (FileNotFoundError, pygame.error, TypeError) as e:
         print(f"Warning: Could not load image from {sprite_path}: {e}")
         # Return a default placeholder surface
         placeholder = pygame.Surface(size)
@@ -225,7 +235,7 @@ class Mobs(Characters):
         self.mob_type = mob_type
         self.animations = {
             anim_name: load_spritesheet(
-                stats["sprite_sheet"], stats["frame_size"][0], stats["frame_size"][1],
+                os.path.join(MOBS_DIR, stats["sprite_sheet"]), stats["frame_size"][0], stats["frame_size"][1],
                 anim_data["frames"], row=anim_data["row"], scale=frame_size,
             )
             for anim_name, anim_data in stats["animations"].items()
@@ -358,34 +368,97 @@ class Mobs(Characters):
 
         self.update_animation(current_time)
 
-class Vampire3boss(Mobs):
-    def __init__(self, name, load_sprite, size, x, y, hp=500, attack=20, magicpower=20,
-                 speed=15, mana=200, defense=10, mana_regen=10,
-                 poison_ticks=0, poison_tick_timer=0, poison_damage=0, can_poison=False,
-                 attack_animation=None, death_animation=None, idle_animation=None,
-                 walk_animation=None, run_animation=None, hurt_animation=None):
-        super().__init__(name=name, load_sprite=load_sprite, size=size, x=x, y=y, hp=hp,
-                          attack=attack, magicpower=magicpower, speed=speed, mana=mana,
-                          defense=defense, mana_regen=mana_regen, poison_ticks=poison_ticks,
-                          poison_tick_timer=poison_tick_timer, poison_damage=poison_damage,
-                          can_poison=can_poison)
-        self.attack_animation = attack_animation if attack_animation is not None else []
-        self.death_animation = death_animation if death_animation is not None else []
-        self.idle_animation = idle_animation if idle_animation is not None else []
-        self.walk_animation = walk_animation if walk_animation is not None else []
-        self.run_animation = run_animation if run_animation is not None else []
-        self.hurt_animation = hurt_animation if hurt_animation is not None else []
+class Bosses(Characters):
+    """Base class for boss enemies, stats pulled from Boss_Type. Bosses use one
+    full pre-rendered image per animation state (from assets/bosses) rather than
+    a sliced spritesheet grid, matching the *_full.png naming already in use."""
+    def __init__(self, boss_type, x, y, size=(200, 200)):
+        if boss_type not in Boss_Type:
+            raise ValueError(f"'{boss_type}' is not a defined boss type in Boss_Type.")
+        stats = Boss_Type[boss_type]
+        self.boss_type = boss_type
 
-    def load_vampire3_grid(self, filename, cols=12, rows=4, scale=4):
-        pass
+        self.animations = {
+            "idle":   [load_image(os.path.join(BOSSES_DIR, f"{boss_type}_Idle_full.png"), size)],
+            "walk":   [load_image(os.path.join(BOSSES_DIR, f"{boss_type}_Walk_full.png"), size)],
+            "attack": [load_image(os.path.join(BOSSES_DIR, f"{boss_type}_Attack_full.png"), size)],
+            "hurt":   [load_image(os.path.join(BOSSES_DIR, f"{boss_type}_Hurt_full.png"), size)],
+            "death":  [load_image(os.path.join(BOSSES_DIR, f"{boss_type}_Death_full.png"), size)],
+        }
+        self.current_animation = "idle"
+        self.frame_index = 0
+        self.dying = False
 
-    def animate(self):
-        self.attack_animation = [load_image("Vampires3_Attack_full.png", (100, 100))]
-        self.death_animation = [load_image("Vampires3_Death_full.png", (100, 100))]
-        self.idle_animation = [load_image("Vampires3_Idle_full.png", (100, 100))]
-        self.walk_animation = [load_image("Vampires3_Walk_full.png", (100, 100))]
-        self.run_animation = [load_image("Vampires3_Run_full.png", (100, 100))]
-        self.hurt_animation = [load_image("Vampires3_Hurt_full.png", (100, 100))]
+        super().__init__(name=boss_type, load_sprite=None, size=size, x=x, y=y,
+                          hp=stats["hp"], attack=stats["attack"], magicpower=stats["magicpower"],
+                          speed=stats["speed"], defense=stats["defense"],
+                          image=self.animations["idle"][0])
+
+        self.aggro_range = 260
+        self.attack_range = 60
+        self.attack_cooldown = 1800
+        self.last_attack_time = 0
+        self.state = "idle"
+
+    def set_animation(self, name):
+        if name in self.animations:
+            self.current_animation = name
+            self.frame_index = 0
+
+    def update_animation(self):
+        frames = self.animations[self.current_animation]
+        self.image = frames[self.frame_index % len(frames)]
+
+    def take_damage(self, amount):
+        reduced = super().take_damage(amount)
+        if self.hp <= 0:
+            self.dying = True
+            self.set_animation("death")
+        return reduced
+
+    def enemy_attack(self, target):
+        damage = max(self.atk - target.defense, 0)
+        target.hp -= damage
+        target.hp = max(target.hp, 0)
+        print(f"{self.name} dealt {damage} damage to {target.name}")
+
+    def update_ai(self, player, current_time):
+        if self.dying:
+            self.update_animation()
+            return
+
+        dx = player.rect.centerx - self.rect.centerx
+        dy = player.rect.centery - self.rect.centery
+        distance = math.hypot(dx, dy)
+
+        if distance <= self.attack_range:
+            self.state = "attacking"
+        elif distance <= self.aggro_range:
+            self.state = "chasing"
+        else:
+            self.state = "idle"
+
+        if self.state == "chasing":
+            if distance != 0:
+                dx /= distance
+                dy /= distance
+            self.rect.x += dx * self.speed
+            self.rect.y += dy * self.speed
+            self.set_animation("walk")
+        elif self.state == "attacking":
+            self.set_animation("attack")
+            if current_time - self.last_attack_time >= self.attack_cooldown:
+                self.enemy_attack(player)
+                self.last_attack_time = current_time
+        else:
+            self.set_animation("idle")
+
+        self.update_animation()
+
+
+class Vampire3boss(Bosses):
+    def __init__(self, x, y, size=(200, 200)):
+        super().__init__("Vampire", x, y, size=size)
 
 
 class Assain(Characters):  # Assassin class, features and skills
@@ -543,7 +616,7 @@ class Summoner(Characters):
         self.summons = [s for s in self.summons if s.is_alive()]
 
         if len(self.summons) >= self.MAX_SUMMONS:
-            print(f"{self.name} already has a summon out! Only three familiar can be active at a time.")
+            print(f"{self.name} already has {self.MAX_SUMMONS} summons out! ({len(self.summons)}/{self.MAX_SUMMONS})")
             return None
 
         if self.mana < mana_cost:
@@ -689,7 +762,7 @@ class Summons(pygame.sprite.Sprite):
         stat_table = stat_table if stat_table is not None else SUMMON_TYPE
         stats = stat_table[summon_type]
         self.summon_type = summon_type
-        self.image = load.image(sprite_path, size)
+        self.image = load_image(os.path.join(SUMMONS_DIR, sprite_path), size)
         self.rect = self.image.get_rect()
         self.rect.x = x
         self.rect.y = y
@@ -1021,13 +1094,3 @@ class Gladiator(Characters):
             self.defense = self.base_defense
             self.last_stand_active = False
             print(f"{self.name}'s Last Stand fades. Defense returns to {self.defense}.")
-
-
-
-
-
-
-
-
-
-
