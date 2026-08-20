@@ -1,0 +1,45 @@
+import random
+from classes_mobs import Mobs, Bosses, MOBS_TYPE, Boss_Type
+
+
+def spawn_mob(mob_type, x, y):
+    """Create a single Mobs instance by key from MOBS_TYPE."""
+    if mob_type not in MOBS_TYPE:
+        print(f"'{mob_type}' is not a defined mob type in MOBS_TYPE.")
+        return None
+    return Mobs(mob_type, x, y)
+
+
+def spawn_boss(boss_type, x, y):
+    """Create a single Bosses instance by key from Boss_Type."""
+    if boss_type not in Boss_Type:
+        print(f"'{boss_type}' is not a defined boss type in Boss_Type.")
+        return None
+    return Bosses(boss_type, x, y)
+
+
+def spawn_random_mobs(count, group, area_rect):
+    """Spawn `count` random mob types at random positions inside area_rect, add to group."""
+    for _ in range(count):
+        mob_type = random.choice(list(MOBS_TYPE.keys()))
+        x = random.randint(area_rect.left, area_rect.right)
+        y = random.randint(area_rect.top, area_rect.bottom)
+        mob = spawn_mob(mob_type, x, y)
+        if mob:
+            group.add(mob)
+
+
+def spawn_wave(mob_types, positions, group):
+    """Spawn one mob per (mob_type, position) pair, e.g. a hand-placed room layout."""
+    for mob_type, (x, y) in zip(mob_types, positions):
+        mob = spawn_mob(mob_type, x, y)
+        if mob:
+            group.add(mob)
+
+mobs_group = pygame.sprite.Group()
+spawn_random_mobs(4, mobs_group, pygame.Rect(600, 100, 350, 400))  # 4 random mobs in that box
+
+boss_group = pygame.sprite.Group()
+boss = spawn_boss("Vampire", 800, 300)
+if boss:
+    boss_group.add(boss)
